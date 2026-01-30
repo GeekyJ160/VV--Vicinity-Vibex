@@ -30,5 +30,6 @@ export enum TabType {
   STORIES = 'STORIES',
   PROMOS = 'PROMOS',
   PROFILE = 'PROFILE',
-  CHAT = 'CHAT'
+  CHAT = 'CHAT',
+  TRENDING = 'TRENDING'
 }
