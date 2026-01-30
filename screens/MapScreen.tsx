@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { VibeUser } from '../types';
 
 interface MapScreenProps {
@@ -13,49 +13,77 @@ const MapScreen: React.FC<MapScreenProps> = ({ isDarkMode }) => {
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [chatMessage, setChatMessage] = useState('');
   const [isDynamic, setIsDynamic] = useState(true);
+  
+  // Track user headings for more organic movement (wandering)
+  const headings = useRef<Record<string, number>>({});
 
   useEffect(() => {
-    // Initial Mock Data with normalized starting positions
-    setVibes([
+    const initialUsers: VibeUser[] = [
       { id: '1', name: 'Alex 🌙', vibe: 'Nightlife', lat: 40, lng: 30, distance: '0.2mi', verified: true, avatar: 'https://picsum.photos/id/64/150/150' },
       { id: '2', name: 'Jamie 🎸', vibe: 'Live Music', lat: 60, lng: 70, distance: '0.1mi', verified: true, avatar: 'https://picsum.photos/id/65/150/150' },
       { id: '3', name: 'Trivia @TheSpot', vibe: 'Games', lat: 25, lng: 45, distance: '0.3mi', verified: true, avatar: 'https://picsum.photos/id/66/150/150' },
       { id: '4', name: 'Sara 🏞️', vibe: 'Outdoor', lat: 75, lng: 20, distance: '0.4mi', verified: false, avatar: 'https://picsum.photos/id/67/150/150' },
       { id: '5', name: 'Jordan ☕', vibe: 'Coffee Shop', lat: 15, lng: 85, distance: '0.6mi', verified: true, avatar: 'https://picsum.photos/id/68/150/150' },
-    ]);
+    ];
+    
+    // Initialize random headings
+    initialUsers.forEach(u => {
+      headings.current[u.id] = Math.random() * Math.PI * 2;
+    });
+    
+    setVibes(initialUsers);
   }, []);
 
-  // Enhanced Simulation effect for real-time location movement
+  // Organic Wander Simulation
   useEffect(() => {
     if (!isDynamic) return;
 
     const interval = setInterval(() => {
       setVibes((currentVibes) =>
         currentVibes.map((v) => {
-          // Calculate a small delta for movement (approx 0.5% - 1% of screen space)
-          const dLat = (Math.random() - 0.5) * 1.2;
-          const dLng = (Math.random() - 0.5) * 1.2;
+          // Get current heading or initialize
+          let angle = headings.current[v.id] || Math.random() * Math.PI * 2;
           
-          // Constrain movement to keep them within visible bounds (5% to 95%)
+          // Drift the angle slightly (-15 to +15 degrees)
+          angle += (Math.random() - 0.5) * 0.5;
+          headings.current[v.id] = angle;
+
+          // Calculate movement vector (approx 1.5% - 2.5% of map space)
+          const speed = 1.5 + Math.random() * 1.5;
+          const dLat = Math.cos(angle) * speed;
+          const dLng = Math.sin(angle) * speed;
+          
           let newLat = v.lat + dLat;
           let newLng = v.lng + dLng;
           
-          if (newLat < 5 || newLat > 95) newLat = v.lat - dLat;
-          if (newLng < 5 || newLng > 95) newLng = v.lng - dLng;
+          // Bounce off boundaries (5% to 95%)
+          if (newLat < 5 || newLat > 95) {
+            headings.current[v.id] += Math.PI; // Reverse direction
+            newLat = v.lat - dLat;
+          }
+          if (newLng < 5 || newLng > 95) {
+            headings.current[v.id] += Math.PI; // Reverse direction
+            newLng = v.lng - dLng;
+          }
+
+          // Calculate dynamic distance from center (50, 50)
+          const dx = newLng - 50;
+          const dy = newLat - 50;
+          const dist = Math.sqrt(dx * dx + dy * dy) * 0.02; // Arbitrary scale for "miles"
 
           return {
             ...v,
             lat: newLat,
             lng: newLng,
+            distance: `${dist.toFixed(1)}mi`
           };
         })
       );
-    }, 3000); // Update every 3 seconds to match the CSS transition duration
+    }, 4000); // Update every 4s for a leisurely walk pace
 
     return () => clearInterval(interval);
   }, [isDynamic]);
 
-  // Filter vibes based on search query
   const filteredVibes = useMemo(() => {
     return vibes.filter((v) => 
       v.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -63,7 +91,6 @@ const MapScreen: React.FC<MapScreenProps> = ({ isDarkMode }) => {
     );
   }, [vibes, searchQuery]);
 
-  // Sync selected user data if their position updates
   const activeUser = useMemo(() => {
     return filteredVibes.find(v => v.id === selectedUser?.id) || null;
   }, [filteredVibes, selectedUser]);
@@ -79,38 +106,55 @@ const MapScreen: React.FC<MapScreenProps> = ({ isDarkMode }) => {
         }}
       />
 
+      {/* Real-time "Self" Marker at center */}
+      <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-0 opacity-40">
+        <div className="w-20 h-20 rounded-full bg-pink-500/10 border border-pink-500/30 flex items-center justify-center animate-pulse">
+           <div className="w-3 h-3 bg-pink-500 rounded-full shadow-[0_0_10px_#EC4899]"></div>
+        </div>
+      </div>
+
       {/* Map Markers with Smooth Gliding Transitions */}
       {filteredVibes.map((v) => (
         <button
           key={v.id}
           onClick={() => setSelectedUser(v)}
-          className={`absolute transform -translate-x-1/2 -translate-y-1/2 transition-all ease-linear z-10 ${isDynamic ? 'duration-[3000ms]' : 'duration-300'} hover:scale-125 hover:z-20`}
+          className={`absolute transform -translate-x-1/2 -translate-y-1/2 transition-all ease-linear z-10 ${isDynamic ? 'duration-[4000ms]' : 'duration-300'} hover:scale-125 hover:z-20`}
           style={{ left: `${v.lng}%`, top: `${v.lat}%` }}
         >
-          <div className={`p-1 rounded-full border-2 transition-colors ${selectedUser?.id === v.id ? 'border-pink-500 scale-110 shadow-[0_0_15px_rgba(236,72,153,0.5)]' : v.verified ? 'border-pink-500/50' : 'border-amber-500/50'} ${isDarkMode ? 'bg-[#1E1B4B]' : 'bg-white shadow-md'}`}>
+          {/* Real-time Radar Pulse */}
+          {isDynamic && (
+            <div className="absolute inset-0 flex items-center justify-center">
+              <div className="w-12 h-12 bg-pink-500/20 rounded-full animate-ping"></div>
+            </div>
+          )}
+          
+          <div className={`p-1 rounded-full border-2 transition-colors relative z-10 ${selectedUser?.id === v.id ? 'border-pink-500 scale-110 shadow-[0_0_15px_rgba(236,72,153,0.5)]' : v.verified ? 'border-pink-500/50' : 'border-amber-500/50'} ${isDarkMode ? 'bg-[#1E1B4B]' : 'bg-white shadow-md'}`}>
             <img src={v.avatar} alt={v.name} className="w-10 h-10 rounded-full" />
-            <div className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full border-2 border-[#1E1B4B] animate-pulse"></div>
+            <div className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full border-2 border-[#1E1B4B]"></div>
           </div>
-          <div className={`${isDarkMode ? 'bg-black/80 text-white border-white/10' : 'bg-white/90 text-slate-800 border-slate-200 shadow-sm'} backdrop-blur-sm text-[10px] px-2 py-0.5 rounded-full mt-1 border whitespace-nowrap font-bold`}>
-            {v.name}
+          
+          <div className={`${isDarkMode ? 'bg-black/80 text-white border-white/10' : 'bg-white/90 text-slate-800 border-slate-200 shadow-sm'} backdrop-blur-sm text-[9px] px-2 py-0.5 rounded-full mt-1 border whitespace-nowrap font-black tracking-widest uppercase flex items-center gap-1`}>
+             <span className="text-pink-500">◈</span> {v.name}
           </div>
         </button>
       ))}
 
       {/* User Detail Overlay */}
       {activeUser && !isChatOpen && (
-        <div className={`absolute bottom-6 left-6 right-6 p-4 backdrop-blur-md rounded-2xl border shadow-2xl animate-in fade-in slide-in-from-bottom-4 z-20 transition-colors duration-300 ${isDarkMode ? 'bg-[#1E1B4B]/90 border-pink-500/30' : 'bg-white/95 border-slate-200'}`}>
+        <div className={`absolute bottom-6 left-6 right-6 p-5 backdrop-blur-md rounded-[2rem] border shadow-2xl animate-in fade-in slide-in-from-bottom-4 z-20 transition-colors duration-300 ${isDarkMode ? 'bg-[#1E1B4B]/90 border-pink-500/30' : 'bg-white/95 border-slate-200'}`}>
           <div className="flex items-center space-x-4">
             <div className="relative">
-              <img src={activeUser.avatar} className="w-16 h-16 rounded-full border-2 border-pink-500" />
-              <div className="absolute bottom-0 right-0 w-4 h-4 bg-green-500 rounded-full border-2 border-[#1E1B4B]"></div>
+              <img src={activeUser.avatar} className="w-16 h-16 rounded-full border-2 border-pink-500 shadow-lg" />
+              <div className="absolute bottom-0 right-0 w-5 h-5 bg-green-500 rounded-full border-4 border-[#1E1B4B]"></div>
             </div>
             <div className="flex-1">
               <div className="flex items-center space-x-2">
-                <h3 className={`font-bold text-lg ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>{activeUser.name}</h3>
+                <h3 className={`font-black text-lg italic ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>{activeUser.name}</h3>
                 {activeUser.verified && <span className="text-pink-400 text-sm">✅</span>}
               </div>
-              <p className={`${isDarkMode ? 'text-zinc-400' : 'text-slate-500'} text-sm`}>{activeUser.vibe} • Moving nearby</p>
+              <p className={`${isDarkMode ? 'text-zinc-400' : 'text-slate-500'} text-[11px] font-bold uppercase tracking-widest`}>
+                {activeUser.vibe} • <span className="text-pink-500">{activeUser.distance}</span>
+              </p>
             </div>
             <button 
               onClick={() => setSelectedUser(null)}
@@ -119,15 +163,15 @@ const MapScreen: React.FC<MapScreenProps> = ({ isDarkMode }) => {
               ✕
             </button>
           </div>
-          <div className="mt-4 flex space-x-2">
+          <div className="mt-5 flex space-x-3">
             <button 
               onClick={() => setIsChatOpen(true)}
-              className="flex-1 py-3 bg-pink-600 hover:bg-pink-500 text-white rounded-xl font-bold transition-colors shadow-lg shadow-pink-500/20 active:scale-95"
+              className="flex-2 px-6 py-3.5 bg-pink-600 hover:bg-pink-500 text-white rounded-2xl font-black text-xs uppercase tracking-widest transition-all shadow-xl shadow-pink-500/20 active:scale-95"
             >
-              💜 VIBE CHAT
+              💜 SEND VIBE
             </button>
-            <button className={`flex-1 py-3 rounded-xl font-bold transition-colors ${isDarkMode ? 'bg-white/10 hover:bg-white/20 text-white' : 'bg-slate-100 hover:bg-slate-200 text-slate-700'}`}>
-              SEE PROFILE
+            <button className={`flex-1 py-3.5 rounded-2xl font-black text-xs uppercase tracking-widest transition-all ${isDarkMode ? 'bg-white/10 hover:bg-white/20 text-white' : 'bg-slate-100 hover:bg-slate-200 text-slate-700'}`}>
+              PROFILE
             </button>
           </div>
         </div>
@@ -135,33 +179,43 @@ const MapScreen: React.FC<MapScreenProps> = ({ isDarkMode }) => {
 
       {/* Top Controls */}
       {!isChatOpen && (
-        <div className="absolute top-6 left-6 right-6 z-30 space-y-2">
-          <div className={`backdrop-blur-md border rounded-full px-5 py-3 flex items-center shadow-lg transition-colors focus-within:border-pink-500/50 ${isDarkMode ? 'bg-[#1E1B4B]/80 border-white/10' : 'bg-white border-slate-200'}`}>
+        <div className="absolute top-6 left-6 right-6 z-30 space-y-3">
+          <div className={`backdrop-blur-md border rounded-2xl px-5 py-3.5 flex items-center shadow-2xl transition-all focus-within:ring-2 focus-within:ring-pink-500/50 ${isDarkMode ? 'bg-[#1E1B4B]/80 border-white/10' : 'bg-white border-slate-200'}`}>
             <span className="mr-3 opacity-50 text-pink-400">🔍</span>
             <input 
               type="text" 
-              placeholder="Search Vibes, People, or Categories..." 
-              className={`bg-transparent border-none outline-none w-full text-sm placeholder:text-zinc-500 ${isDarkMode ? 'text-white' : 'text-slate-900'}`}
+              placeholder="Search local energy..." 
+              className={`bg-transparent border-none outline-none w-full text-sm font-medium placeholder:text-zinc-500 ${isDarkMode ? 'text-white' : 'text-slate-900'}`}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
           </div>
-          <div className="flex justify-between items-center px-2">
-            <span className={`text-[10px] font-black tracking-widest uppercase ${isDarkMode ? 'text-zinc-500' : 'text-slate-400'}`}>
-              {filteredVibes.length} Vibes Active
-            </span>
+          <div className="flex justify-between items-center px-1">
+            <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full backdrop-blur-md border ${isDarkMode ? 'bg-black/40 border-white/5' : 'bg-white/80 border-slate-200 shadow-sm'}`}>
+              <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
+              <span className={`text-[10px] font-black tracking-[0.15em] uppercase ${isDarkMode ? 'text-zinc-400' : 'text-slate-500'}`}>
+                {filteredVibes.length} VIBES LIVE
+              </span>
+            </div>
+            
             <button 
               onClick={() => setIsDynamic(!isDynamic)}
-              className={`px-3 py-1.5 rounded-full text-[10px] font-bold tracking-widest border transition-all flex items-center gap-2 ${isDynamic ? 'bg-pink-500/20 border-pink-500 text-pink-500' : isDarkMode ? 'bg-white/5 border-white/10 text-zinc-500' : 'bg-slate-200 border-slate-300 text-slate-600'}`}
+              className={`px-4 py-1.5 rounded-xl text-[10px] font-black tracking-widest border transition-all flex items-center gap-2 shadow-lg ${isDynamic ? 'bg-pink-600/10 border-pink-500/50 text-pink-500' : isDarkMode ? 'bg-white/5 border-white/10 text-zinc-500' : 'bg-slate-200 border-slate-300 text-slate-600'}`}
             >
-              <div className={`w-1.5 h-1.5 rounded-full ${isDynamic ? 'bg-pink-500 animate-ping' : 'bg-current'}`}></div>
-              {isDynamic ? 'LIVE TRACKING' : 'STATIC MODE'}
+              {isDynamic ? (
+                <>
+                  <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                  SYNCING LIVE
+                </>
+              ) : (
+                'PAUSED'
+              )}
             </button>
           </div>
         </div>
       )}
 
-      {/* Chat Interface Modal */}
+      {/* Chat Interface Modal (Same as original but integrated) */}
       {isChatOpen && activeUser && (
         <div className={`absolute inset-0 z-50 animate-in slide-in-from-bottom-full duration-300 flex flex-col transition-colors duration-300 ${isDarkMode ? 'bg-[#0F0F23]' : 'bg-slate-50'}`}>
           <header className={`px-6 py-4 border-b flex items-center space-x-4 transition-colors duration-300 ${isDarkMode ? 'bg-[#1E1B4B] border-white/10' : 'bg-white border-slate-200 shadow-sm'}`}>
@@ -178,14 +232,14 @@ const MapScreen: React.FC<MapScreenProps> = ({ isDarkMode }) => {
               </div>
               <div>
                 <h3 className={`font-bold text-sm leading-none ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>{activeUser.name}</h3>
-                <span className="text-[10px] text-green-400 uppercase tracking-widest font-black">Moving nearby</span>
+                <span className="text-[10px] text-green-400 uppercase tracking-widest font-black">Online Nearby</span>
               </div>
             </div>
           </header>
 
           <div className="flex-1 overflow-y-auto p-6 space-y-4 scroll-smooth">
             <div className="text-center py-10">
-              <p className="text-xs text-zinc-500 uppercase tracking-[0.2em] font-bold">This is the start of your vibe chat</p>
+              <p className="text-xs text-zinc-500 uppercase tracking-[0.2em] font-black">Matched via {activeUser.vibe} Vibe</p>
             </div>
             
             <div className="flex items-start space-x-3">
@@ -195,24 +249,13 @@ const MapScreen: React.FC<MapScreenProps> = ({ isDarkMode }) => {
                 <span className="text-[10px] text-zinc-500 mt-2 block">12:45 PM</span>
               </div>
             </div>
-
-            <div className="flex items-start justify-end space-x-3">
-              <div className="bg-pink-600 p-4 rounded-2xl rounded-tr-none max-w-[80%] shadow-lg shadow-pink-500/20 text-white">
-                <p className="text-sm">Yeah! Just checking out the vicinity. Love the vibe here!</p>
-                <span className="text-[10px] text-pink-200 mt-2 block text-right">12:46 PM</span>
-              </div>
-            </div>
-
-            <div className={`p-3 rounded-xl text-center transition-colors duration-300 ${isDarkMode ? 'bg-white/5' : 'bg-slate-200/50'}`}>
-              <p className="text-[10px] text-zinc-400 italic">User is currently in motion...</p>
-            </div>
           </div>
 
           <div className={`p-4 border-t pb-10 transition-colors duration-300 ${isDarkMode ? 'bg-[#1E1B4B] border-white/10' : 'bg-white border-slate-200'}`}>
             <div className={`flex items-center space-x-2 rounded-2xl px-4 py-2 border transition-all duration-300 focus-within:border-pink-500/50 ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-slate-100 border-slate-200'}`}>
               <input 
                 type="text" 
-                placeholder="Send a vibe..." 
+                placeholder="Send a message..." 
                 className={`bg-transparent border-none outline-none flex-1 text-sm py-2 ${isDarkMode ? 'text-white' : 'text-slate-900'}`}
                 value={chatMessage}
                 onChange={(e) => setChatMessage(e.target.value)}
