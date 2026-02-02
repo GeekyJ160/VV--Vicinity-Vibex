@@ -13,63 +13,125 @@ const MapScreen: React.FC<MapScreenProps> = ({ isDarkMode }) => {
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [chatMessage, setChatMessage] = useState('');
   const [isDynamic, setIsDynamic] = useState(true);
+  const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'offline'>('connecting');
+  const [peerCount, setPeerCount] = useState(0);
   
-  // Track user headings for more organic movement (wandering)
+  // Real-time Self Location (Map coordinates 0-100)
+  const [selfPos, setSelfPos] = useState({ lat: 50, lng: 50 });
+  
+  // Ref to track user headings for simulated wander
   const headings = useRef<Record<string, number>>({});
+  const channel = useRef<BroadcastChannel | null>(null);
+  const selfId = useRef(Math.random().toString(36).substr(2, 9));
 
+  // 1. Initialize BroadcastChannel (Simulated P2P/WebRTC Data Channel)
+  useEffect(() => {
+    try {
+      channel.current = new BroadcastChannel('vicinity-vibe-sync');
+      setConnectionStatus('connected');
+
+      channel.current.onmessage = (event) => {
+        const { type, payload } = event.data;
+        if (type === 'LOCATION_UPDATE' && payload.id !== selfId.current) {
+          setVibes(prev => {
+            const exists = prev.find(u => u.id === payload.id);
+            if (exists) {
+              return prev.map(u => u.id === payload.id ? { ...u, ...payload, isPeer: true } : u);
+            }
+            return [...prev, { ...payload, isPeer: true }];
+          });
+        }
+      };
+
+      // Periodic "Heartbeat" to announce presence
+      const heartbeat = setInterval(() => {
+        channel.current?.postMessage({
+          type: 'LOCATION_UPDATE',
+          payload: {
+            id: selfId.current,
+            name: 'You (Peer)',
+            vibe: 'Syncing...',
+            lat: selfPos.lat,
+            lng: selfPos.lng,
+            avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=self',
+            distance: '0.0mi',
+            verified: true
+          }
+        });
+      }, 2000);
+
+      return () => {
+        clearInterval(heartbeat);
+        channel.current?.close();
+      };
+    } catch (e) {
+      setConnectionStatus('offline');
+    }
+  }, [selfPos]);
+
+  // 2. Real-time Geolocation Hook
+  useEffect(() => {
+    if (!navigator.geolocation) return;
+
+    const watchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        // Map actual GPS to 0-100 coordinates for the demo map
+        // This is a simplification: in a real app, we'd use a real map provider (Google Maps/Leaflet)
+        // Here we simulate movement based on small changes in real GPS
+        const lat = 50 + (pos.coords.latitude % 0.01) * 1000;
+        const lng = 50 + (pos.coords.longitude % 0.01) * 1000;
+        
+        // Clamp to map boundaries
+        setSelfPos({ 
+          lat: Math.min(95, Math.max(5, lat)), 
+          lng: Math.min(95, Math.max(5, lng)) 
+        });
+      },
+      (err) => console.warn('Geolocation error:', err),
+      { enableHighAccuracy: true }
+    );
+
+    return () => navigator.geolocation.clearWatch(watchId);
+  }, []);
+
+  // 3. Simulated "Filler" Users and Wander Logic
   useEffect(() => {
     const initialUsers: VibeUser[] = [
-      { id: '1', name: 'Alex 🌙', vibe: 'Nightlife', lat: 40, lng: 30, distance: '0.2mi', verified: true, avatar: 'https://picsum.photos/id/64/150/150' },
-      { id: '2', name: 'Jamie 🎸', vibe: 'Live Music', lat: 60, lng: 70, distance: '0.1mi', verified: true, avatar: 'https://picsum.photos/id/65/150/150' },
-      { id: '3', name: 'Trivia @TheSpot', vibe: 'Games', lat: 25, lng: 45, distance: '0.3mi', verified: true, avatar: 'https://picsum.photos/id/66/150/150' },
-      { id: '4', name: 'Sara 🏞️', vibe: 'Outdoor', lat: 75, lng: 20, distance: '0.4mi', verified: false, avatar: 'https://picsum.photos/id/67/150/150' },
-      { id: '5', name: 'Jordan ☕', vibe: 'Coffee Shop', lat: 15, lng: 85, distance: '0.6mi', verified: true, avatar: 'https://picsum.photos/id/68/150/150' },
+      { id: 'sim-1', name: 'Alex 🌙', vibe: 'Nightlife', lat: 40, lng: 30, distance: '0.2mi', verified: true, avatar: 'https://picsum.photos/id/64/150/150' },
+      { id: 'sim-2', name: 'Jamie 🎸', vibe: 'Live Music', lat: 60, lng: 70, distance: '0.1mi', verified: true, avatar: 'https://picsum.photos/id/65/150/150' },
+      { id: 'sim-3', name: 'Trivia @TheSpot', vibe: 'Games', lat: 25, lng: 45, distance: '0.3mi', verified: true, avatar: 'https://picsum.photos/id/66/150/150' },
     ];
     
-    // Initialize random headings
-    initialUsers.forEach(u => {
-      headings.current[u.id] = Math.random() * Math.PI * 2;
-    });
-    
+    initialUsers.forEach(u => headings.current[u.id] = Math.random() * Math.PI * 2);
     setVibes(initialUsers);
   }, []);
 
-  // Organic Wander Simulation
   useEffect(() => {
     if (!isDynamic) return;
 
     const interval = setInterval(() => {
       setVibes((currentVibes) =>
         currentVibes.map((v) => {
-          // Get current heading or initialize
+          // Only wander the "simulated" users, not peers from BroadcastChannel
+          if (v.id.startsWith('peer-')) return v;
+
           let angle = headings.current[v.id] || Math.random() * Math.PI * 2;
-          
-          // Drift the angle slightly (-15 to +15 degrees)
-          angle += (Math.random() - 0.5) * 0.5;
+          angle += (Math.random() - 0.5) * 0.4;
           headings.current[v.id] = angle;
 
-          // Calculate movement vector (approx 1.5% - 2.5% of map space)
-          const speed = 1.5 + Math.random() * 1.5;
+          const speed = 0.8 + Math.random() * 1.2;
           const dLat = Math.cos(angle) * speed;
           const dLng = Math.sin(angle) * speed;
           
           let newLat = v.lat + dLat;
           let newLng = v.lng + dLng;
           
-          // Bounce off boundaries (5% to 95%)
-          if (newLat < 5 || newLat > 95) {
-            headings.current[v.id] += Math.PI; // Reverse direction
-            newLat = v.lat - dLat;
-          }
-          if (newLng < 5 || newLng > 95) {
-            headings.current[v.id] += Math.PI; // Reverse direction
-            newLng = v.lng - dLng;
-          }
+          if (newLat < 5 || newLat > 95) { headings.current[v.id] += Math.PI; newLat = v.lat - dLat; }
+          if (newLng < 5 || newLng > 95) { headings.current[v.id] += Math.PI; newLng = v.lng - dLng; }
 
-          // Calculate dynamic distance from center (50, 50)
-          const dx = newLng - 50;
-          const dy = newLat - 50;
-          const dist = Math.sqrt(dx * dx + dy * dy) * 0.02; // Arbitrary scale for "miles"
+          const dx = newLng - selfPos.lng;
+          const dy = newLat - selfPos.lat;
+          const dist = Math.sqrt(dx * dx + dy * dy) * 0.02;
 
           return {
             ...v,
@@ -79,10 +141,10 @@ const MapScreen: React.FC<MapScreenProps> = ({ isDarkMode }) => {
           };
         })
       );
-    }, 4000); // Update every 4s for a leisurely walk pace
+    }, 3000);
 
     return () => clearInterval(interval);
-  }, [isDynamic]);
+  }, [isDynamic, selfPos]);
 
   const filteredVibes = useMemo(() => {
     return vibes.filter((v) => 
@@ -91,13 +153,16 @@ const MapScreen: React.FC<MapScreenProps> = ({ isDarkMode }) => {
     );
   }, [vibes, searchQuery]);
 
-  const activeUser = useMemo(() => {
-    return filteredVibes.find(v => v.id === selectedUser?.id) || null;
-  }, [filteredVibes, selectedUser]);
-
   return (
     <div className={`relative w-full h-full overflow-hidden transition-colors duration-300 ${isDarkMode ? 'bg-[#0F0F23]' : 'bg-slate-100'}`}>
-      {/* Grid Pattern Background to Simulate Map */}
+      {/* Dynamic Radar Background */}
+      <div className="absolute inset-0 pointer-events-none overflow-hidden">
+         <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[200%] aspect-square border border-pink-500/5 rounded-full animate-[pulse_8s_infinite]"></div>
+         <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[150%] aspect-square border border-pink-500/10 rounded-full animate-[pulse_6s_infinite]"></div>
+         <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[100%] aspect-square border border-pink-500/20 rounded-full animate-[pulse_4s_infinite]"></div>
+      </div>
+
+      {/* Grid Pattern */}
       <div 
         className={`absolute inset-0 opacity-20 pointer-events-none transition-opacity duration-300`}
         style={{
@@ -106,170 +171,131 @@ const MapScreen: React.FC<MapScreenProps> = ({ isDarkMode }) => {
         }}
       />
 
-      {/* Real-time "Self" Marker at center */}
-      <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-0 opacity-40">
-        <div className="w-20 h-20 rounded-full bg-pink-500/10 border border-pink-500/30 flex items-center justify-center animate-pulse">
-           <div className="w-3 h-3 bg-pink-500 rounded-full shadow-[0_0_10px_#EC4899]"></div>
+      {/* Real-time SELF Marker */}
+      <div 
+        className="absolute transform -translate-x-1/2 -translate-y-1/2 transition-all duration-1000 ease-linear z-50"
+        style={{ left: `${selfPos.lng}%`, top: `${selfPos.lat}%` }}
+      >
+        <div className="relative">
+          <div className="absolute inset-0 w-12 h-12 -left-4 -top-4 bg-pink-500/30 rounded-full animate-ping"></div>
+          <div className="w-6 h-6 bg-pink-500 rounded-full border-4 border-white shadow-[0_0_20px_#EC4899] flex items-center justify-center">
+            <div className="w-1.5 h-1.5 bg-white rounded-full"></div>
+          </div>
+          <div className="absolute top-8 left-1/2 -translate-x-1/2 bg-pink-600 text-[8px] font-black text-white px-2 py-0.5 rounded-full whitespace-nowrap uppercase tracking-widest shadow-lg">
+            You (Live)
+          </div>
         </div>
       </div>
 
-      {/* Map Markers with Smooth Gliding Transitions */}
+      {/* Peer and Simulated Markers */}
       {filteredVibes.map((v) => (
         <button
           key={v.id}
           onClick={() => setSelectedUser(v)}
-          className={`absolute transform -translate-x-1/2 -translate-y-1/2 transition-all ease-linear z-10 ${isDynamic ? 'duration-[4000ms]' : 'duration-300'} hover:scale-125 hover:z-20`}
+          className={`absolute transform -translate-x-1/2 -translate-y-1/2 transition-all ease-linear z-10 ${isDynamic ? 'duration-[3000ms]' : 'duration-300'} hover:scale-125 hover:z-20`}
           style={{ left: `${v.lng}%`, top: `${v.lat}%` }}
         >
-          {/* Real-time Radar Pulse */}
           {isDynamic && (
             <div className="absolute inset-0 flex items-center justify-center">
-              <div className="w-12 h-12 bg-pink-500/20 rounded-full animate-ping"></div>
+              <div className={`w-10 h-10 rounded-full animate-ping ${(v as any).isPeer ? 'bg-violet-500/30' : 'bg-pink-500/20'}`}></div>
             </div>
           )}
           
-          <div className={`p-1 rounded-full border-2 transition-colors relative z-10 ${selectedUser?.id === v.id ? 'border-pink-500 scale-110 shadow-[0_0_15px_rgba(236,72,153,0.5)]' : v.verified ? 'border-pink-500/50' : 'border-amber-500/50'} ${isDarkMode ? 'bg-[#1E1B4B]' : 'bg-white shadow-md'}`}>
-            <img src={v.avatar} alt={v.name} className="w-10 h-10 rounded-full" />
-            <div className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full border-2 border-[#1E1B4B]"></div>
+          <div className={`p-1 rounded-full border-2 transition-all relative z-10 ${selectedUser?.id === v.id ? 'border-pink-500 scale-110 shadow-[0_0_15px_rgba(236,72,153,0.5)]' : (v as any).isPeer ? 'border-violet-500' : 'border-amber-500/50'} ${isDarkMode ? 'bg-[#1E1B4B]' : 'bg-white shadow-md'}`}>
+            <img src={v.avatar} alt={v.name} className="w-9 h-9 rounded-full object-cover" />
+            {(v as any).isPeer && (
+              <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-violet-600 rounded-full border-2 border-white flex items-center justify-center">
+                 <span className="text-[6px] text-white">📡</span>
+              </div>
+            )}
           </div>
           
-          <div className={`${isDarkMode ? 'bg-black/80 text-white border-white/10' : 'bg-white/90 text-slate-800 border-slate-200 shadow-sm'} backdrop-blur-sm text-[9px] px-2 py-0.5 rounded-full mt-1 border whitespace-nowrap font-black tracking-widest uppercase flex items-center gap-1`}>
-             <span className="text-pink-500">◈</span> {v.name}
+          <div className={`${isDarkMode ? 'bg-black/80 text-white border-white/10' : 'bg-white/90 text-slate-800 border-slate-200 shadow-sm'} backdrop-blur-sm text-[8px] px-2 py-0.5 rounded-full mt-1 border whitespace-nowrap font-black tracking-widest uppercase flex items-center gap-1`}>
+             <span className={(v as any).isPeer ? 'text-violet-500' : 'text-pink-500'}>◈</span> {v.name}
           </div>
         </button>
       ))}
 
+      {/* Top HUD: Connectivity & Search */}
+      <div className="absolute top-6 left-6 right-6 z-30 space-y-3">
+        <div className={`flex items-center justify-between px-1 transition-all`}>
+          <div className={`flex items-center gap-3 px-4 py-2 rounded-2xl backdrop-blur-xl border ${isDarkMode ? 'bg-black/40 border-white/10' : 'bg-white/80 border-slate-200 shadow-lg'}`}>
+            <div className="flex items-center gap-2">
+              <div className={`w-2 h-2 rounded-full ${connectionStatus === 'connected' ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`}></div>
+              <span className={`text-[9px] font-black tracking-[0.2em] uppercase ${isDarkMode ? 'text-zinc-300' : 'text-slate-600'}`}>
+                {connectionStatus === 'connected' ? 'RTC SYNC ACTIVE' : 'NETWORK ERROR'}
+              </span>
+            </div>
+            <div className="w-px h-3 bg-zinc-500/30"></div>
+            <span className={`text-[9px] font-black tracking-[0.1em] ${isDarkMode ? 'text-pink-400' : 'text-pink-600'}`}>
+              {vibes.length} VIBES FOUND
+            </span>
+          </div>
+          
+          <div className="flex gap-2">
+            <button className={`w-10 h-10 rounded-full border flex items-center justify-center transition-all shadow-lg ${isDarkMode ? 'bg-black/40 border-white/10 text-white' : 'bg-white border-slate-200 text-slate-600'}`}>
+              📡
+            </button>
+          </div>
+        </div>
+
+        <div className={`backdrop-blur-md border rounded-2xl px-5 py-3 flex items-center shadow-2xl transition-all focus-within:ring-2 focus-within:ring-pink-500/50 ${isDarkMode ? 'bg-[#1E1B4B]/80 border-white/10' : 'bg-white border-slate-200'}`}>
+          <span className="mr-3 text-pink-500">🔍</span>
+          <input 
+            type="text" 
+            placeholder="Search local vibe stream..." 
+            className={`bg-transparent border-none outline-none w-full text-sm font-medium placeholder:text-zinc-500 ${isDarkMode ? 'text-white' : 'text-slate-900'}`}
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
+        </div>
+      </div>
+
       {/* User Detail Overlay */}
-      {activeUser && !isChatOpen && (
-        <div className={`absolute bottom-6 left-6 right-6 p-5 backdrop-blur-md rounded-[2rem] border shadow-2xl animate-in fade-in slide-in-from-bottom-4 z-20 transition-colors duration-300 ${isDarkMode ? 'bg-[#1E1B4B]/90 border-pink-500/30' : 'bg-white/95 border-slate-200'}`}>
-          <div className="flex items-center space-x-4">
-            <div className="relative">
-              <img src={activeUser.avatar} className="w-16 h-16 rounded-full border-2 border-pink-500 shadow-lg" />
-              <div className="absolute bottom-0 right-0 w-5 h-5 bg-green-500 rounded-full border-4 border-[#1E1B4B]"></div>
+      {selectedUser && !isChatOpen && (
+        <div className={`absolute bottom-6 left-6 right-6 p-6 backdrop-blur-xl rounded-[2.5rem] border shadow-[0_20px_60px_-15px_rgba(0,0,0,0.5)] animate-in slide-in-from-bottom-6 duration-500 z-40 ${isDarkMode ? 'bg-[#1E1B4B]/90 border-pink-500/30' : 'bg-white/95 border-slate-200'}`}>
+          <div className="flex items-center space-x-5">
+            <div className="relative group cursor-pointer" onClick={() => setSelectedUser(null)}>
+              <img src={selectedUser.avatar} className="w-20 h-20 rounded-full border-4 border-pink-500 shadow-2xl transition-transform group-hover:scale-105" />
+              <div className="absolute bottom-1 right-1 w-6 h-6 bg-green-500 rounded-full border-4 border-[#1E1B4B]"></div>
             </div>
             <div className="flex-1">
               <div className="flex items-center space-x-2">
-                <h3 className={`font-black text-lg italic ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>{activeUser.name}</h3>
-                {activeUser.verified && <span className="text-pink-400 text-sm">✅</span>}
+                <h3 className={`font-black text-xl italic tracking-tight ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>{selectedUser.name}</h3>
+                {selectedUser.verified && <span className="bg-pink-500 text-white p-0.5 rounded-full text-[8px]">✔</span>}
               </div>
-              <p className={`${isDarkMode ? 'text-zinc-400' : 'text-slate-500'} text-[11px] font-bold uppercase tracking-widest`}>
-                {activeUser.vibe} • <span className="text-pink-500">{activeUser.distance}</span>
+              <p className={`text-pink-500 text-[10px] font-black uppercase tracking-[0.2em] mb-1`}>
+                {selectedUser.vibe}
               </p>
+              <div className={`flex items-center gap-1.5 ${isDarkMode ? 'text-zinc-400' : 'text-slate-500'} text-[10px] font-bold`}>
+                <span className="bg-white/10 px-2 py-0.5 rounded-md">📍 {selectedUser.distance} AWAY</span>
+                <span className="bg-white/10 px-2 py-0.5 rounded-md uppercase">Live Now</span>
+              </div>
             </div>
-            <button 
-              onClick={() => setSelectedUser(null)}
-              className={`p-2 rounded-full transition-colors ${isDarkMode ? 'hover:bg-white/10 text-white' : 'hover:bg-slate-100 text-slate-400'}`}
-            >
-              ✕
-            </button>
           </div>
-          <div className="mt-5 flex space-x-3">
+          <div className="mt-6 flex space-x-3">
             <button 
               onClick={() => setIsChatOpen(true)}
-              className="flex-2 px-6 py-3.5 bg-pink-600 hover:bg-pink-500 text-white rounded-2xl font-black text-xs uppercase tracking-widest transition-all shadow-xl shadow-pink-500/20 active:scale-95"
+              className="flex-[2] py-4 bg-gradient-to-r from-pink-600 to-violet-600 hover:from-pink-500 hover:to-violet-500 text-white rounded-2xl font-black text-xs uppercase tracking-widest transition-all shadow-xl shadow-pink-500/30 active:scale-95"
             >
-              💜 SEND VIBE
+              💜 CONNECT VIBE
             </button>
-            <button className={`flex-1 py-3.5 rounded-2xl font-black text-xs uppercase tracking-widest transition-all ${isDarkMode ? 'bg-white/10 hover:bg-white/20 text-white' : 'bg-slate-100 hover:bg-slate-200 text-slate-700'}`}>
-              PROFILE
+            <button className={`flex-1 py-4 rounded-2xl font-black text-xs uppercase tracking-widest transition-all ${isDarkMode ? 'bg-white/10 hover:bg-white/20 text-white' : 'bg-slate-100 hover:bg-slate-200 text-slate-700'}`}>
+              BIO
             </button>
           </div>
         </div>
       )}
 
-      {/* Top Controls */}
-      {!isChatOpen && (
-        <div className="absolute top-6 left-6 right-6 z-30 space-y-3">
-          <div className={`backdrop-blur-md border rounded-2xl px-5 py-3.5 flex items-center shadow-2xl transition-all focus-within:ring-2 focus-within:ring-pink-500/50 ${isDarkMode ? 'bg-[#1E1B4B]/80 border-white/10' : 'bg-white border-slate-200'}`}>
-            <span className="mr-3 opacity-50 text-pink-400">🔍</span>
-            <input 
-              type="text" 
-              placeholder="Search local energy..." 
-              className={`bg-transparent border-none outline-none w-full text-sm font-medium placeholder:text-zinc-500 ${isDarkMode ? 'text-white' : 'text-slate-900'}`}
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-            />
-          </div>
-          <div className="flex justify-between items-center px-1">
-            <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full backdrop-blur-md border ${isDarkMode ? 'bg-black/40 border-white/5' : 'bg-white/80 border-slate-200 shadow-sm'}`}>
-              <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
-              <span className={`text-[10px] font-black tracking-[0.15em] uppercase ${isDarkMode ? 'text-zinc-400' : 'text-slate-500'}`}>
-                {filteredVibes.length} VIBES LIVE
-              </span>
-            </div>
-            
-            <button 
-              onClick={() => setIsDynamic(!isDynamic)}
-              className={`px-4 py-1.5 rounded-xl text-[10px] font-black tracking-widest border transition-all flex items-center gap-2 shadow-lg ${isDynamic ? 'bg-pink-600/10 border-pink-500/50 text-pink-500' : isDarkMode ? 'bg-white/5 border-white/10 text-zinc-500' : 'bg-slate-200 border-slate-300 text-slate-600'}`}
-            >
-              {isDynamic ? (
-                <>
-                  <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                  SYNCING LIVE
-                </>
-              ) : (
-                'PAUSED'
-              )}
-            </button>
-          </div>
+      {/* Connection Drawer (Simulated WebRTC stats) */}
+      <div className={`absolute bottom-6 right-6 flex flex-col items-end space-y-2 pointer-events-none opacity-50`}>
+        <div className={`text-[8px] font-black uppercase tracking-widest ${isDarkMode ? 'text-zinc-500' : 'text-slate-400'}`}>
+          P2P CHANNEL: {selfId.current.toUpperCase()}
         </div>
-      )}
-
-      {/* Chat Interface Modal (Same as original but integrated) */}
-      {isChatOpen && activeUser && (
-        <div className={`absolute inset-0 z-50 animate-in slide-in-from-bottom-full duration-300 flex flex-col transition-colors duration-300 ${isDarkMode ? 'bg-[#0F0F23]' : 'bg-slate-50'}`}>
-          <header className={`px-6 py-4 border-b flex items-center space-x-4 transition-colors duration-300 ${isDarkMode ? 'bg-[#1E1B4B] border-white/10' : 'bg-white border-slate-200 shadow-sm'}`}>
-            <button 
-              onClick={() => setIsChatOpen(false)}
-              className="p-2 -ml-2 hover:bg-white/5 rounded-full text-pink-500 transition-transform active:scale-90"
-            >
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg>
-            </button>
-            <div className="flex-1 flex items-center space-x-3">
-              <div className="relative">
-                <img src={activeUser.avatar} className="w-10 h-10 rounded-full border border-pink-500" />
-                <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-green-500 rounded-full border-2 border-[#1E1B4B]"></div>
-              </div>
-              <div>
-                <h3 className={`font-bold text-sm leading-none ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>{activeUser.name}</h3>
-                <span className="text-[10px] text-green-400 uppercase tracking-widest font-black">Online Nearby</span>
-              </div>
-            </div>
-          </header>
-
-          <div className="flex-1 overflow-y-auto p-6 space-y-4 scroll-smooth">
-            <div className="text-center py-10">
-              <p className="text-xs text-zinc-500 uppercase tracking-[0.2em] font-black">Matched via {activeUser.vibe} Vibe</p>
-            </div>
-            
-            <div className="flex items-start space-x-3">
-              <img src={activeUser.avatar} className="w-8 h-8 rounded-full" />
-              <div className={`p-4 rounded-2xl rounded-tl-none border max-w-[80%] transition-colors duration-300 ${isDarkMode ? 'bg-[#1E1B4B] border-white/5' : 'bg-white border-slate-200 shadow-sm'}`}>
-                <p className={`text-sm ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>Hey! I'm around {activeUser.vibe} area. Are you nearby?</p>
-                <span className="text-[10px] text-zinc-500 mt-2 block">12:45 PM</span>
-              </div>
-            </div>
-          </div>
-
-          <div className={`p-4 border-t pb-10 transition-colors duration-300 ${isDarkMode ? 'bg-[#1E1B4B] border-white/10' : 'bg-white border-slate-200'}`}>
-            <div className={`flex items-center space-x-2 rounded-2xl px-4 py-2 border transition-all duration-300 focus-within:border-pink-500/50 ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-slate-100 border-slate-200'}`}>
-              <input 
-                type="text" 
-                placeholder="Send a message..." 
-                className={`bg-transparent border-none outline-none flex-1 text-sm py-2 ${isDarkMode ? 'text-white' : 'text-slate-900'}`}
-                value={chatMessage}
-                onChange={(e) => setChatMessage(e.target.value)}
-              />
-              <button 
-                className={`p-2 rounded-xl transition-all ${chatMessage ? 'bg-pink-600 text-white scale-110' : 'text-zinc-400'}`}
-                disabled={!chatMessage}
-              >
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
-              </button>
-            </div>
-          </div>
+        <div className={`text-[8px] font-black uppercase tracking-widest ${isDarkMode ? 'text-zinc-500' : 'text-slate-400'}`}>
+          LATENCY: 42ms
         </div>
-      )}
+      </div>
     </div>
   );
 };
